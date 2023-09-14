@@ -4,9 +4,14 @@
 #include <stdexcept>
 #include <vector>
 #include <memory>
+#include <future>
+
+#include "async.hpp"
+
+#include "Hypodermic/Container.h"
 
 namespace holden {
-
+    
     // An optional pure-virtual struct to mark request types
     template <typename TResponse>
     struct request {
@@ -17,51 +22,90 @@ namespace holden {
 
     struct request_handler_base {
         virtual ~request_handler_base() = default;
-        virtual std::shared_ptr<void> _handle(void* request) { return nullptr; }
+        virtual std::shared_ptr<void> _handle(void* request, cancellationToken& cancellation) { return nullptr; }
     };
 
     template <typename TRequest>
     struct request_handler : request_handler_base {
         virtual ~request_handler() = default;
-        virtual std::shared_ptr<void> _handle(void* request) override {
-            return static_cast<std::shared_ptr<void>>(handle(*static_cast<TRequest*>(request)));
+        virtual std::shared_ptr<void> _handle(void* request, cancellationToken& cancellation) override {
+            return static_cast<std::shared_ptr<void>>(handle(*static_cast<TRequest*>(request), cancellation));
         }
-        virtual std::shared_ptr<typename TRequest::response_type> handle(TRequest& request) = 0;
+        virtual std::shared_ptr<typename TRequest::response_type> handle(TRequest& request, cancellationToken& cancellation) = 0;
     };
     
 
 
     class mediator {
     protected:
-        std::vector<std::shared_ptr<request_handler_base>> handlers_;
+        std::shared_ptr<Hypodermic::Container> m_container;
+
+        template<typename TRequest>
+        inline std::shared_ptr<typename TRequest::response_type> handle(const std::shared_ptr<request_handler<TRequest>>& handler, TRequest& request, cancellationToken& cancellation)
+        {
+            return handler->handle(request, cancellation);
+        }
 
     public:
-        mediator() {}
+        mediator(std::shared_ptr<Hypodermic::Container> a_container) : m_container(a_container) {}
 
-        template<typename THandler>
-        void add_handler(std::shared_ptr<THandler>& handler) {
-            std::shared_ptr<request_handler_base> hb = std::dynamic_pointer_cast<request_handler_base>(handler);
-            handlers_.push_back(hb);
+        template<typename TRequest>
+        auto send(TRequest& r, cancellationToken& cancellation) -> std::vector<std::shared_ptr<typename TRequest::response_type>>
+        {
+
+            auto ret = std::vector<std::shared_ptr < typename TRequest::response_type>>();
+
+            auto handlers = m_container->resolveAll<request_handler<TRequest>>();
+            for (auto handler : handlers)
+            {
+                ret.push_back(handle(handler, r, cancellation));
+            }
+
+            return ret;
         }
 
         template<typename TRequest>
-        auto send(TRequest& r) -> std::shared_ptr < typename TRequest::response_type> {
-            for (std::shared_ptr<request_handler_base>& handler : handlers_) {
-                std::shared_ptr<request_handler<TRequest>> typed_handler = std::dynamic_pointer_cast<request_handler<TRequest>>(handler);
-                if (typed_handler) {
-                    return typed_handler->handle(r);
-                }
+        auto sendAsync(TRequest& r, cancellationToken& cancellation) -> futures<typename TRequest::response_type>
+        {
+            auto self = this;
+
+            auto ret = std::vector<std::future<taskResult<typename TRequest::response_type>>>();
+
+            auto handlers = m_container->resolveAll<request_handler<TRequest>>();
+            for (auto handler : handlers)
+            {
+                std::future<taskResult<typename TRequest::response_type>> ftr = std::async(std::launch::async, [handler, &self, &r, &cancellation]() {
+                    taskResult<typename TRequest::response_type> taskResult;
+                    
+                    try
+                    {
+                        taskResult.result = self->handle(handler, r, cancellation);
+                    }
+                    catch (timeoutException& e)
+                    {
+                        taskResult.exception = std::make_shared<timeoutException>(e);
+                    }
+                    catch (cancellationException& e)
+                    {
+                        taskResult.exception = std::make_shared<cancellationException>(e);
+                    }
+                    catch (std::exception& e)
+                    {
+                        taskResult.exception = std::make_shared<std::exception>(e);
+                    }
+                    
+                    return taskResult;
+                });
+                ret.push_back(std::move(ftr));
             }
-            throw std::runtime_error("No handler found for request type");
+
+            return futures<typename TRequest::response_type>(ret);
         }
+
+
 
         virtual ~mediator() {}
     };
-
-    template <typename... Args>
-    mediator make_mediator(Args&... args) {
-        return mediator(args...);
-    }
 
 } // namespace holden
 
