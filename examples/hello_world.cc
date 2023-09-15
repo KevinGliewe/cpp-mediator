@@ -90,6 +90,33 @@ public:
 };
 
 
+struct FirstSayGoodlbyMiddleware : public holden::request_middleware<SayGoodbye>
+{
+    std::shared_ptr<FirstImpression> handle(SayGoodbye& r, cancellationToken& cancellation) override
+    {
+        std::cout << "FirstSayGoodlbyMiddleware::handle\n";
+        return next->handle(r, cancellation);
+    }
+};
+
+struct SecondSayGoodlbyMiddleware : public holden::request_middleware<SayGoodbye>
+{
+    std::shared_ptr<FirstImpression> handle(SayGoodbye& r, cancellationToken& cancellation) override
+    {
+        std::cout << "SecondSayGoodlbyMiddleware::handle\n";
+        return next->handle(r, cancellation);
+    }
+};
+
+struct SayHelloMiddleware : public holden::request_middleware<SayHello>
+{
+    std::shared_ptr<void> handle(SayHello& r, cancellationToken& cancellation) override
+    {
+        std::cout << "SayHelloMiddleware::handle\n";
+        return next->handle(r, cancellation);
+    }
+};
+
 
 
 int main() {
@@ -99,6 +126,9 @@ int main() {
     builder.registerType<SpeakerHello>().as<holden::request_handler<SayHello>>();
     builder.registerType<SpeakerGoodbye>().as<holden::request_handler<SayHello>>();
     builder.registerType<SpeakerGoodbye>().as<holden::request_handler<SayGoodbye>>();
+    builder.registerType<FirstSayGoodlbyMiddleware>().as<holden::request_middleware<SayGoodbye>>();
+    builder.registerType<SecondSayGoodlbyMiddleware>().as<holden::request_middleware<SayGoodbye>>();
+    builder.registerType<SayHelloMiddleware>().as<holden::request_middleware<SayHello>>();
 
     auto container = builder.build();
     

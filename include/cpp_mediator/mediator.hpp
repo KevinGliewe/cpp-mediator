@@ -12,25 +12,22 @@
 
 namespace holden {
     
-    // An optional pure-virtual struct to mark request types
     template <typename TResponse>
     struct request {
         using response_type = TResponse;
         virtual ~request() = default;
     };
 
-
-    struct request_handler_base {
-        virtual ~request_handler_base() = default;
-        virtual std::shared_ptr<void> _handle(void* request, cancellationToken& cancellation) { return nullptr; }
+    template <typename TRequest>
+    struct request_handler {
+        virtual ~request_handler() = default;
+        virtual std::shared_ptr<typename TRequest::response_type> handle(TRequest& request, cancellationToken& cancellation) = 0;
     };
 
     template <typename TRequest>
-    struct request_handler : request_handler_base {
-        virtual ~request_handler() = default;
-        virtual std::shared_ptr<void> _handle(void* request, cancellationToken& cancellation) override {
-            return static_cast<std::shared_ptr<void>>(handle(*static_cast<TRequest*>(request), cancellation));
-        }
+    struct request_middleware {
+        std::shared_ptr<request_middleware<TRequest>> next;
+        virtual ~request_middleware() = default;
         virtual std::shared_ptr<typename TRequest::response_type> handle(TRequest& request, cancellationToken& cancellation) = 0;
     };
     
@@ -40,9 +37,43 @@ namespace holden {
     protected:
         std::shared_ptr<Hypodermic::Container> m_container;
 
+        template <typename TRequest>
+        struct request_middleware_head : public request_middleware<TRequest> {
+            const std::shared_ptr<request_handler<TRequest>> head_handler;
+            inline request_middleware_head(const std::shared_ptr<request_handler<TRequest>>& a_head_handler) : head_handler(a_head_handler) {}
+            std::shared_ptr<typename TRequest::response_type> handle(TRequest& request, cancellationToken& cancellation) override
+            {
+                return head_handler->handle(request, cancellation);
+            }
+        };
+        
         template<typename TRequest>
-        inline std::shared_ptr<typename TRequest::response_type> handle(const std::shared_ptr<request_handler<TRequest>>& handler, TRequest& request, cancellationToken& cancellation)
+        static inline std::shared_ptr<typename TRequest::response_type> handle(std::shared_ptr<Hypodermic::Container> container, const std::shared_ptr<request_handler<TRequest>>& handler, TRequest& request, cancellationToken& cancellation)
         {
+            do
+            {
+                if (container == nullptr)
+                    break;
+
+                auto middleware = container->resolveAll<request_middleware<TRequest>>();
+
+                if (middleware.size() == 0)
+                    break;
+
+                std::shared_ptr<request_middleware<TRequest>> prev_middleware =
+                    std::shared_ptr<request_middleware<TRequest>>(new request_middleware_head<TRequest>(handler));
+
+
+                for (int i = middleware.size() - 1; i >= 0; i--)
+                {
+                    auto curr_middleware = middleware[i];
+                    curr_middleware->next = prev_middleware;
+                    prev_middleware = curr_middleware;
+                }
+
+                return middleware[0]->handle(request, cancellation);
+            } while (false);
+
             return handler->handle(request, cancellation);
         }
 
@@ -50,7 +81,7 @@ namespace holden {
         mediator(std::shared_ptr<Hypodermic::Container> a_container) : m_container(a_container) {}
 
         template<typename TRequest>
-        auto send(TRequest& r, cancellationToken& cancellation) -> std::vector<std::shared_ptr<typename TRequest::response_type>>
+        inline auto send(TRequest& r, cancellationToken& cancellation) -> std::vector<std::shared_ptr<typename TRequest::response_type>>
         {
 
             auto ret = std::vector<std::shared_ptr < typename TRequest::response_type>>();
@@ -58,28 +89,26 @@ namespace holden {
             auto handlers = m_container->resolveAll<request_handler<TRequest>>();
             for (auto handler : handlers)
             {
-                ret.push_back(handle(handler, r, cancellation));
+                ret.push_back(handle(m_container, handler, r, cancellation));
             }
 
             return ret;
         }
 
         template<typename TRequest>
-        auto sendAsync(TRequest& r, cancellationToken& cancellation) -> futures<typename TRequest::response_type>
+        inline auto sendAsync(TRequest& r, cancellationToken& cancellation) -> futures<typename TRequest::response_type>
         {
-            auto self = this;
-
             auto ret = std::vector<std::future<taskResult<typename TRequest::response_type>>>();
-
+            auto container = m_container;
             auto handlers = m_container->resolveAll<request_handler<TRequest>>();
             for (auto handler : handlers)
             {
-                std::future<taskResult<typename TRequest::response_type>> ftr = std::async(std::launch::async, [handler, &self, &r, &cancellation]() {
+                std::future<taskResult<typename TRequest::response_type>> ftr = std::async(std::launch::async, [handler, container, &r, &cancellation]() {
                     taskResult<typename TRequest::response_type> taskResult;
                     
                     try
                     {
-                        taskResult.result = self->handle(handler, r, cancellation);
+                        taskResult.result = handle(container, handler, r, cancellation);
                     }
                     catch (timeoutException& e)
                     {
@@ -99,7 +128,7 @@ namespace holden {
                 ret.push_back(std::move(ftr));
             }
 
-            return futures<typename TRequest::response_type>(ret);
+            return futures<typename TRequest::response_type>(ret, cancellation);
         }
 
 

@@ -3,6 +3,7 @@
 #include <future>
 #include <vector>
 #include <memory>
+#include <chrono>
 
 
 struct cancellationException : public std::exception {
@@ -17,30 +18,30 @@ class cancellationToken {
 
 protected:
     
-    virtual void throwIt() {
+    inline virtual void throwIt() {
         throw cancellationException();
     }
     
 public:
-    cancellationToken() { }
+    inline cancellationToken() { }
     
-    cancellationToken(const cancellationToken& other) {
+    inline cancellationToken(const cancellationToken& other) {
         is_cancelled = other.is_cancelled;
     }
     
-    cancellationToken(cancellationToken&& other) noexcept {
+    inline cancellationToken(cancellationToken&& other) noexcept {
         is_cancelled = other.is_cancelled;
     }
     
-    void cancel() {
+    inline void cancel() {
         *is_cancelled = true;
     }
 
-    virtual bool isCanceled() {
+    inline virtual bool isCanceled() {
         return *is_cancelled;
     }
     
-    void throwIfCanceled() {
+    inline void throwIfCanceled() {
         if (isCanceled()) {
             throwIt();
         }
@@ -59,17 +60,17 @@ class timeoutToken : public cancellationToken {
     
 protected:
     
-    void throwIt() override {
+    inline void throwIt() override {
         throw timeoutException();
     }
     
 public:
     
-    timeoutToken(std::chrono::milliseconds timeout) : m_timeout(timeout), m_start(std::chrono::steady_clock::now()) { }
+    inline timeoutToken(std::chrono::milliseconds timeout) : m_timeout(timeout), m_start(std::chrono::steady_clock::now()) { }
     
-    timeoutToken(int timeout) : timeoutToken(std::chrono::milliseconds(timeout)) { }
+    inline timeoutToken(int timeout) : timeoutToken(std::chrono::milliseconds(timeout)) { }
 
-    bool isCanceled() override {
+    inline bool isCanceled() override {
         return cancellationToken::isCanceled() || std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - m_start) > m_timeout;
     }
 };
@@ -79,28 +80,28 @@ struct taskResult {
     std::shared_ptr<TResult> result;
     std::shared_ptr<std::exception> exception;
 
-    taskResult() : result(nullptr), exception(nullptr) { }
+    inline taskResult() : result(nullptr), exception(nullptr) { }
     
-    taskResult(std::shared_ptr<TResult> result) : result(result), exception(nullptr) { }
+    inline taskResult(std::shared_ptr<TResult> result) : result(result), exception(nullptr) { }
     
-    taskResult(std::shared_ptr<std::exception> exception) : result(nullptr), exception(exception) { }
+    inline taskResult(std::shared_ptr<std::exception> exception) : result(nullptr), exception(exception) { }
     
-    bool hasResult() {
+    inline bool hasResult() {
         return result != nullptr;
     }
     
-    bool hasException() {
+    inline bool hasException() {
         return exception != nullptr;
     }
 
-    TResult getResult() {
+    inline TResult getResult() {
         if (hasException()) {
             std::rethrow_exception(exception);
         }
         return *result;
     }
     
-    bool withResult(std::function<void(std::shared_ptr<TResult>)> action) {
+    inline bool withResult(std::function<void(std::shared_ptr<TResult>)> action) {
         if (hasResult()) {
             action(result);
             return true;
@@ -108,7 +109,7 @@ struct taskResult {
         return false;
     }
 
-    bool withException(std::function<void(std::shared_ptr<std::exception>)> action) {
+    inline bool withException(std::function<void(std::shared_ptr<std::exception>)> action) {
         if (hasException()) {
             action(exception);
             return true;
@@ -116,7 +117,7 @@ struct taskResult {
         return false;
     }
     
-    bool getResult(std::shared_ptr<TResult>& res) {
+    inline bool getResult(std::shared_ptr<TResult>& res) {
         if (hasResult()) {
             res = result;
             return true;
@@ -124,7 +125,7 @@ struct taskResult {
         return false;
     }
 
-    bool getException(std::shared_ptr<std::exception>& ex) {
+    inline bool getException(std::shared_ptr<std::exception>& ex) {
         if (hasException()) {
             ex = exception;
             return true;
@@ -132,11 +133,11 @@ struct taskResult {
         return false;
     }
 
-    bool isCanceled() {
+    inline bool isCanceled() {
         return hasException() && dynamic_cast<cancellationException*>(exception.get()) != nullptr;
     }
 
-    bool isTimeout() {
+    inline bool isTimeout() {
         return hasException() && dynamic_cast<timeoutException*>(exception.get()) != nullptr;
     }
 };
@@ -146,11 +147,11 @@ class taskResults : public std::vector<taskResult<TResult>> {
     
 public:
     
-    taskResults(std::vector<taskResult<TResult>> results) : std::vector<taskResult<TResult>>(std::move(results)) { }
+    inline taskResults(std::vector<taskResult<TResult>> results) : std::vector<taskResult<TResult>>(std::move(results)) { }
     
-    taskResults() { }
+    inline taskResults() { }
 
-    void throwFirstException()
+    inline void throwFirstException()
     {
         for (auto& res : *this) {
             if (res.hasException()) {
@@ -159,7 +160,7 @@ public:
         }
     }
 
-    bool hasResult() {
+    inline bool hasResult() {
         for (auto& res : *this) {
             if (res.hasResult()) {
                 return true;
@@ -168,7 +169,7 @@ public:
         return false;
     }
 
-    bool hasException() {
+    inline bool hasException() {
         for (auto& res : *this) {
             if (res.hasException()) {
                 return true;
@@ -177,7 +178,7 @@ public:
         return false;
     }
 
-    TResult getResult() {
+    inline TResult getResult() {
         for (auto& res : *this) {
             if (res.hasResult()) {
                 return res.getResult();
@@ -186,19 +187,19 @@ public:
         throwFirstException();
     }
 
-    void withResults(std::function<void(std::shared_ptr<TResult>)> action) {
+    inline void withResults(std::function<void(std::shared_ptr<TResult>)> action) {
         for (auto& res : *this) {
             res.withResult(action);
         }
     }
 
-    void withExceptions(std::function<void(std::shared_ptr<std::exception>)> action) {
+    inline void withExceptions(std::function<void(std::shared_ptr<std::exception>)> action) {
         for (auto& res : *this) {
             res.withException(action);
         }
     }
 
-    bool withFirstResult(std::function<void(std::shared_ptr<TResult>)> action) {
+    inline bool withFirstResult(std::function<void(std::shared_ptr<TResult>)> action) {
         for (auto& res : *this) {
             if (res.withResult(action)) {
                 return true;
@@ -207,7 +208,7 @@ public:
         return false;
     }
 
-    bool withFirstException(std::function<void(std::shared_ptr<std::exception>)> action) {
+    inline bool withFirstException(std::function<void(std::shared_ptr<std::exception>)> action) {
         for (auto& res : *this) {
             if (res.withException(action)) {
                 return true;
@@ -216,7 +217,7 @@ public:
         return false;
     }
 
-    bool getFirstResult(std::shared_ptr<TResult>& res) {
+    inline bool getFirstResult(std::shared_ptr<TResult>& res) {
         for (auto& r : *this) {
             if (r.getResult(res)) {
                 return true;
@@ -225,7 +226,7 @@ public:
         return false;
     }
 
-    bool getFirstException(std::shared_ptr<std::exception>& ex) {
+    inline bool getFirstException(std::shared_ptr<std::exception>& ex) {
         for (auto& r : *this) {
             if (r.getException(ex)) {
                 return true;
@@ -239,17 +240,43 @@ public:
 template<typename TResult>
 class futures {
     std::vector<std::future<taskResult<TResult>>> m_futures;
+    cancellationToken m_token;
     
 public:
-    futures(std::vector<std::future<taskResult<TResult>>>& futures) : m_futures(std::move(futures)) {}
+    inline futures(std::vector<std::future<taskResult<TResult>>>& futures, cancellationToken& a_token)
+        : m_futures(std::move(futures))
+        , m_token(a_token)
+    {}
 
-    void wait() {
+    inline bool isReady()
+    {
         for (auto& ftr : m_futures) {
-            ftr.wait();
+            if (ftr.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    inline bool wait()
+    {
+        while (true)
+        {
+            if (m_token.isCanceled()) {
+                return false;
+            }
+            
+            for (auto& ftr : m_futures) {
+                if (ftr.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+                    continue;
+                }
+            }
+            
+            return true;
         }
     }
     
-    taskResults<TResult> get() {
+    inline taskResults<TResult> get() {
         std::vector<taskResult<TResult>> ret;
         for (auto& ftr : m_futures) {
             ret.push_back(ftr.get());
